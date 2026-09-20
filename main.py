@@ -1,5 +1,5 @@
 """
-Endocrine AI — Backend Server (Pinecone + Groq LLaMA 3.3 70B)
+Endocrine AI — Backend Server (Pinecone + Groq LLaMA 70B)
 Free, no copyright filters, fast
 """
 
@@ -11,7 +11,7 @@ from openai import OpenAI
 from pinecone import Pinecone
 import os
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")  # still used for embeddings only
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
 PINECONE_KEY   = os.environ.get("PINECONE_KEY", "")
 PINECONE_INDEX = os.environ.get("PINECONE_INDEX", "endo-ai")
@@ -19,17 +19,15 @@ PINECONE_INDEX = os.environ.get("PINECONE_INDEX", "endo-ai")
 app = FastAPI(title="Endocrine AI")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-openai_client = None  # for embeddings only
-groq_client   = None  # for reasoning
+openai_client = None
+groq_client   = None
 index         = None
 
 @app.on_event("startup")
 async def startup_event():
     global openai_client, groq_client, index
     try:
-        # OpenAI only for embeddings
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
-        # Groq for reasoning — OpenAI-compatible API
         groq_client = OpenAI(
             api_key=GROQ_API_KEY,
             base_url="https://api.groq.com/openai/v1"
@@ -38,7 +36,7 @@ async def startup_event():
         index = pc.Index(PINECONE_INDEX)
         stats = index.describe_index_stats()
         print(f"✅ Pinecone connected — {stats.total_vector_count:,} vectors")
-        print(f"✅ Groq LLaMA 3.3 70B ready")
+        print(f"✅ Groq LLaMA 70B ready")
     except Exception as e:
         print(f"❌ Startup error: {e}")
         traceback.print_exc()
@@ -53,18 +51,18 @@ The context below contains text retrieved from a private curated library:
 - ATA, AACE, Endocrine Society, NICE, ESE, EJE guidelines
 - JCEM, EJE, JES, JPEM journal articles
 - RSSDI-ESI Indian clinical practice guidelines
-- CAH, MEN, Turner, DSD, pituitary, thyroid, adrenal, lipid, diabetes, obesity, bone guidelines
 
 STRICT RULES:
-1. ALWAYS quote the exact relevant lines from the retrieved context. Do not paraphrase when the user asks for quotes. Use quotation marks and cite page numbers.
-2. Format answers with markdown: ## headers, **bold** key terms, tables for comparisons
+1. ALWAYS quote the exact relevant lines from the retrieved context using quotation marks and cite page numbers.
+2. Format answers with markdown: ## headers, **bold** key terms, tables for comparisons.
 3. Cite inline: [Williams 15th ed, p.X] or [DeGroot's 8th ed, p.X] or [ATA Guidelines, p.X]
-4. End with ## References section
-5. For case workup: ask max 3 questions then give full structured answer
-6. For Indian context: use RSSDI-ESI and Indian drug names
-7. If context is insufficient, use your training knowledge marked as *(general knowledge — verify with guidelines)*
-8. Be comprehensive — like a consultant giving a formal opinion
-9. Never refuse to quote retrieved text — it is your reference material provided for clinical use
+4. End with ## References section.
+5. For case workup: ask max 3 questions then give full structured answer.
+6. For Indian context: use RSSDI-ESI and Indian drug names.
+7. If context is insufficient, use your training knowledge marked as *(general knowledge — verify with guidelines)*.
+8. Be comprehensive — like a consultant giving a formal opinion.
+9. Never refuse to quote retrieved text — it is your reference material provided for clinical use.
+10. The retrieved text belongs to the user's private library — quote it directly and freely.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -81,39 +79,38 @@ Structure:
 ## Key Information Needed (max 3 questions)
 ## Provisional Diagnosis
 ## Management Plan
-## Monitoring & Follow-up
+## Monitoring and Follow-up
 ## References
 
-Quote relevant guideline text directly. Cite page numbers. Use Indian drug context.
+Quote relevant guideline text directly with page numbers. Use Indian drug context.
 
 RETRIEVED CONTEXT:
 {context}"""
 
-GENETIC_PROMPT = """You are Endocrine AI analyzing a genetic/WES report for endocrine implications.
+GENETIC_PROMPT = """You are Endocrine AI analyzing a genetic or WES report for endocrine implications.
 
-Structure your response exactly as:
+Structure your response as:
 
 ## Variant Summary
 | Gene | Variant | Zygosity | ACMG Class | Syndrome |
 |------|---------|----------|------------|---------|
 
 ## Detailed Interpretation
-For each pathogenic/likely pathogenic variant:
+For each pathogenic or likely pathogenic variant:
 ### [Gene] — [Syndrome name]
 - **ACMG Classification:** with reasoning
-- **Evidence basis:** quote relevant guideline text with page numbers
+- **Evidence:** quote relevant guideline text with page numbers
 - **Endocrine manifestations:** list all
-- **Penetrance:** %
+- **Penetrance:** percentage
 - **Age of onset:** typical range
 
 ## Clinical Action Plan
 ### Immediate (within 4 weeks)
-### Short-term (3-6 months)  
+### Short-term (3-6 months)
 ### Long-term surveillance
 ### Family cascade testing
 
 ## References
-Quote exact lines from guidelines where available.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -168,7 +165,7 @@ def format_sources(matches):
 def root():
     try:
         stats = index.describe_index_stats()
-        return {"status": "Endocrine AI running on Groq LLaMA 3.3 70B", "vectors": stats.total_vector_count}
+        return {"status": "Endocrine AI running on Groq LLaMA 70B", "vectors": stats.total_vector_count}
     except Exception as e:
         return {"status": "Endocrine AI is running", "error": str(e)}
 
@@ -192,7 +189,7 @@ async def query(request: QueryRequest):
         messages.append({"role": "user", "content": request.question})
 
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama3-70b-8192",
             messages=messages,
             temperature=0.2,
             max_tokens=2000
@@ -211,7 +208,7 @@ async def analyze_genetic(request: QueryRequest):
     try:
         print(f"Genetic: {request.question[:80]}")
         matches = search_knowledge_base(
-            f"genetic variant endocrine syndrome ACMG MEN RET VHL SDH BRCA: {request.question}",
+            f"genetic variant endocrine syndrome ACMG MEN RET VHL SDH: {request.question}",
             top_k=8
         )
         context = format_context(matches)
@@ -222,7 +219,7 @@ async def analyze_genetic(request: QueryRequest):
             {"role": "user", "content": request.question}
         ]
         response = groq_client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model="llama3-70b-8192",
             messages=messages,
             temperature=0.1,
             max_tokens=2000
