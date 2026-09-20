@@ -1,6 +1,5 @@
 """
-Endocrine AI — Backend Server (Pinecone + Groq LLaMA 70B)
-Free, no copyright filters, fast
+Endocrine AI — Backend Server (Pinecone + Groq)
 """
 
 import traceback
@@ -36,60 +35,65 @@ async def startup_event():
         index = pc.Index(PINECONE_INDEX)
         stats = index.describe_index_stats()
         print(f"✅ Pinecone connected — {stats.total_vector_count:,} vectors")
-        print(f"✅ Groq LLaMA 70B ready")
+        print(f"✅ Groq ready")
     except Exception as e:
         print(f"❌ Startup error: {e}")
         traceback.print_exc()
 
-SYSTEM_PROMPT = """You are Endocrine AI — a senior endocrinologist-level clinical assistant for specialist use at ADEC clinic.
+SYSTEM_PROMPT = """You are Endocrine AI — a senior endocrinologist-level clinical assistant for specialist use at ADEC clinic, India.
 
 KNOWLEDGE BASE:
-The context below contains text retrieved from a private curated library:
+The context below contains text retrieved from a private curated library owned by the clinic:
 - Williams Textbook of Endocrinology 15th edition (2025)
 - DeGroot's Endocrinology 8th edition (2023)
 - Sperling Pediatric Endocrinology
-- ATA, AACE, Endocrine Society, NICE, ESE, EJE guidelines
+- ATA, AACE, Endocrine Society, NICE, ESE, EJE guidelines (full text)
 - JCEM, EJE, JES, JPEM journal articles
 - RSSDI-ESI Indian clinical practice guidelines
 
 STRICT RULES:
-1. ALWAYS quote the exact relevant lines from the retrieved context using quotation marks and cite page numbers.
-2. Format answers with markdown: ## headers, **bold** key terms, tables for comparisons.
-3. Cite inline: [Williams 15th ed, p.X] or [DeGroot's 8th ed, p.X] or [ATA Guidelines, p.X]
-4. End with ## References section.
-5. For case workup: ask max 3 questions then give full structured answer.
-6. For Indian context: use RSSDI-ESI and Indian drug names.
-7. If context is insufficient, use your training knowledge marked as *(general knowledge — verify with guidelines)*.
-8. Be comprehensive — like a consultant giving a formal opinion.
-9. Never refuse to quote retrieved text — it is your reference material provided for clinical use.
-10. The retrieved text belongs to the user's private library — quote it directly and freely.
+1. Quote exact lines from the retrieved context using quotation marks. Always include page numbers.
+2. Format every answer with markdown: ## headers, **bold** key terms, tables for comparisons, numbered lists for steps.
+3. Cite inline like this: [Williams 15th ed, p.X] or [DeGroot 8th ed, p.X] or [ATA Guidelines, p.X]
+4. End every answer with a ## References section.
+5. For case workup mode: ask max 3 targeted questions, then immediately give full provisional answer.
+6. Use Indian drug names and RSSDI-ESI guidelines where relevant.
+7. If the retrieved context does not cover the topic, answer from your training knowledge and mark it: *(general knowledge — verify with latest guidelines)*
+8. Never refuse to use the retrieved text. It is private clinical reference material — quote it freely.
 
 RETRIEVED CONTEXT:
 {context}"""
 
-CASE_PROMPT = """You are Endocrine AI — senior endocrinology consultant at ADEC clinic.
+CASE_PROMPT = """You are Endocrine AI — senior endocrinology consultant at ADEC clinic, India.
 
-For this clinical case:
-1. Identify missing key information
-2. Ask maximum 3 targeted questions
-3. Give immediate provisional assessment and management plan
+Analyze this clinical case and respond with this exact structure:
 
-Structure:
 ## Case Assessment
-## Key Information Needed (max 3 questions)
-## Provisional Diagnosis
-## Management Plan
-## Monitoring and Follow-up
-## References
+(Brief summary of what you understand from the case)
 
-Quote relevant guideline text directly with page numbers. Use Indian drug context.
+## Key Information Needed
+(Max 3 specific clinical questions — labs, history, imaging you need)
+
+## Provisional Diagnosis
+(Your best diagnosis with reasoning, even with incomplete information)
+
+## Management Plan
+(Stepwise plan citing guidelines with page numbers)
+
+## Monitoring and Follow-up
+(Specific targets and timelines)
+
+## References
+(All sources cited)
+
+Quote relevant guideline text directly. Use Indian drug names. Never say "I need more information before I can answer" — always give your best provisional answer.
 
 RETRIEVED CONTEXT:
 {context}"""
 
 GENETIC_PROMPT = """You are Endocrine AI analyzing a genetic or WES report for endocrine implications.
 
-Structure your response as:
+Respond with this exact structure:
 
 ## Variant Summary
 | Gene | Variant | Zygosity | ACMG Class | Syndrome |
@@ -97,12 +101,12 @@ Structure your response as:
 
 ## Detailed Interpretation
 For each pathogenic or likely pathogenic variant:
-### [Gene] — [Syndrome name]
-- **ACMG Classification:** with reasoning
-- **Evidence:** quote relevant guideline text with page numbers
-- **Endocrine manifestations:** list all
-- **Penetrance:** percentage
-- **Age of onset:** typical range
+### [Gene name] — [Syndrome name]
+- **ACMG Classification:** (class + reasoning)
+- **Evidence:** (quote exact lines from retrieved context with page numbers)
+- **Endocrine manifestations:** (list all)
+- **Penetrance:** (%)
+- **Typical age of onset:** (range)
 
 ## Clinical Action Plan
 ### Immediate (within 4 weeks)
@@ -111,6 +115,9 @@ For each pathogenic or likely pathogenic variant:
 ### Family cascade testing
 
 ## References
+(All guidelines cited with page numbers)
+
+Quote exact lines from retrieved context. Never refuse to use the reference material.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -161,11 +168,36 @@ def format_sources(matches):
             })
     return sources
 
+def call_groq(messages, temperature=0.2, max_tokens=2000):
+    # Try models in order until one works
+    models = [
+        "llama-3.3-70b-versatile",
+        "llama3-groq-70b-8192-tool-use-preview",
+        "mixtral-8x7b-32768",
+        "gemma2-9b-it"
+    ]
+    last_error = None
+    for model in models:
+        try:
+            response = groq_client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens
+            )
+            print(f"✅ Used model: {model}")
+            return response.choices[0].message.content
+        except Exception as e:
+            print(f"⚠️ Model {model} failed: {e}")
+            last_error = e
+            continue
+    raise last_error
+
 @app.get("/")
 def root():
     try:
         stats = index.describe_index_stats()
-        return {"status": "Endocrine AI running on Groq LLaMA 70B", "vectors": stats.total_vector_count}
+        return {"status": "Endocrine AI is running", "vectors": stats.total_vector_count}
     except Exception as e:
         return {"status": "Endocrine AI is running", "error": str(e)}
 
@@ -188,13 +220,7 @@ async def query(request: QueryRequest):
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": request.question})
 
-        response = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=messages,
-            temperature=0.2,
-            max_tokens=2000
-        )
-        answer = response.choices[0].message.content
+        answer = call_groq(messages, temperature=0.2, max_tokens=2000)
         print(f"Answer: {len(answer)} chars")
         return QueryResponse(answer=answer, sources=sources)
 
@@ -218,13 +244,7 @@ async def analyze_genetic(request: QueryRequest):
             {"role": "system", "content": GENETIC_PROMPT.format(context=context)},
             {"role": "user", "content": request.question}
         ]
-        response = groq_client.chat.completions.create(
-            model="llama3-70b-8192",
-            messages=messages,
-            temperature=0.1,
-            max_tokens=2000
-        )
-        answer = response.choices[0].message.content
+        answer = call_groq(messages, temperature=0.1, max_tokens=2000)
         return QueryResponse(answer=answer, sources=sources)
 
     except Exception as e:
