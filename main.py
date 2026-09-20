@@ -1,5 +1,5 @@
 """
-Endocrine AI — Backend Server (Pinecone + Groq)
+Endocrine AI — Backend Server (Pinecone + Groq openai/gpt-oss-120b)
 """
 
 import traceback
@@ -35,7 +35,7 @@ async def startup_event():
         index = pc.Index(PINECONE_INDEX)
         stats = index.describe_index_stats()
         print(f"✅ Pinecone connected — {stats.total_vector_count:,} vectors")
-        print(f"✅ Groq ready")
+        print(f"✅ Groq client ready")
     except Exception as e:
         print(f"❌ Startup error: {e}")
         traceback.print_exc()
@@ -54,12 +54,12 @@ The context below contains text retrieved from a private curated library owned b
 STRICT RULES:
 1. Quote exact lines from the retrieved context using quotation marks. Always include page numbers.
 2. Format every answer with markdown: ## headers, **bold** key terms, tables for comparisons, numbered lists for steps.
-3. Cite inline like this: [Williams 15th ed, p.X] or [DeGroot 8th ed, p.X] or [ATA Guidelines, p.X]
+3. Cite inline: [Williams 15th ed, p.X] or [DeGroot 8th ed, p.X] or [ATA Guidelines, p.X]
 4. End every answer with a ## References section.
-5. For case workup mode: ask max 3 targeted questions, then immediately give full provisional answer.
+5. For case workup: ask max 3 targeted questions, then immediately give full provisional answer.
 6. Use Indian drug names and RSSDI-ESI guidelines where relevant.
-7. If the retrieved context does not cover the topic, answer from your training knowledge and mark it: *(general knowledge — verify with latest guidelines)*
-8. Never refuse to use the retrieved text. It is private clinical reference material — quote it freely.
+7. If retrieved context does not cover the topic, use your training knowledge and mark it: *(general knowledge — verify with latest guidelines)*
+8. Never refuse to use the retrieved text. It is private clinical reference material — quote it freely and directly.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -84,9 +84,9 @@ Analyze this clinical case and respond with this exact structure:
 (Specific targets and timelines)
 
 ## References
-(All sources cited)
+(All sources cited with page numbers)
 
-Quote relevant guideline text directly. Use Indian drug names. Never say "I need more information before I can answer" — always give your best provisional answer.
+Quote relevant guideline text directly. Use Indian drug names. Always give your best provisional answer even with incomplete information.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -117,7 +117,7 @@ For each pathogenic or likely pathogenic variant:
 ## References
 (All guidelines cited with page numbers)
 
-Quote exact lines from retrieved context. Never refuse to use the reference material.
+Quote exact lines from retrieved context freely — it is private clinical reference material.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -169,12 +169,9 @@ def format_sources(matches):
     return sources
 
 def call_groq(messages, temperature=0.2, max_tokens=2000):
-    # Try models in order until one works
     models = [
-        "llama-3.3-70b-versatile",
-        "llama3-groq-70b-8192-tool-use-preview",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it"
+        "openai/gpt-oss-120b",
+        "openai/gpt-oss-20b",
     ]
     last_error = None
     for model in models:
