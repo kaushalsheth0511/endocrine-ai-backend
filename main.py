@@ -1,5 +1,6 @@
 """
-Endocrine AI — Backend Server (Pinecone + GPT-4o)
+Endocrine AI — Backend Server (Pinecone + Groq LLaMA 3.3 70B)
+Free, no copyright filters, fast
 """
 
 import traceback
@@ -10,105 +11,109 @@ from openai import OpenAI
 from pinecone import Pinecone
 import os
 
-OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")  # still used for embeddings only
+GROQ_API_KEY   = os.environ.get("GROQ_API_KEY", "")
 PINECONE_KEY   = os.environ.get("PINECONE_KEY", "")
 PINECONE_INDEX = os.environ.get("PINECONE_INDEX", "endo-ai")
 
 app = FastAPI(title="Endocrine AI")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-openai_client = None
-index = None
+openai_client = None  # for embeddings only
+groq_client   = None  # for reasoning
+index         = None
 
 @app.on_event("startup")
 async def startup_event():
-    global openai_client, index
+    global openai_client, groq_client, index
     try:
+        # OpenAI only for embeddings
         openai_client = OpenAI(api_key=OPENAI_API_KEY)
+        # Groq for reasoning — OpenAI-compatible API
+        groq_client = OpenAI(
+            api_key=GROQ_API_KEY,
+            base_url="https://api.groq.com/openai/v1"
+        )
         pc = Pinecone(api_key=PINECONE_KEY)
         index = pc.Index(PINECONE_INDEX)
         stats = index.describe_index_stats()
         print(f"✅ Pinecone connected — {stats.total_vector_count:,} vectors")
+        print(f"✅ Groq LLaMA 3.3 70B ready")
     except Exception as e:
         print(f"❌ Startup error: {e}")
         traceback.print_exc()
 
-SYSTEM_PROMPT = """You are Endocrine AI — a senior endocrinologist-level clinical assistant built for specialist use.
+SYSTEM_PROMPT = """You are Endocrine AI — a senior endocrinologist-level clinical assistant for specialist use at ADEC clinic.
 
-KNOWLEDGE BASE AVAILABLE:
-The context below contains text chunks retrieved from a private curated library including:
-- Williams Textbook of Endocrinology 15th edition
-- DeGroot's Endocrinology 8th edition  
+KNOWLEDGE BASE:
+The context below contains text retrieved from a private curated library:
+- Williams Textbook of Endocrinology 15th edition (2025)
+- DeGroot's Endocrinology 8th edition (2023)
 - Sperling Pediatric Endocrinology
-- ATA, AACE, Endocrine Society, NICE, ESE guidelines (full text)
+- ATA, AACE, Endocrine Society, NICE, ESE, EJE guidelines
 - JCEM, EJE, JES, JPEM journal articles
 - RSSDI-ESI Indian clinical practice guidelines
+- CAH, MEN, Turner, DSD, pituitary, thyroid, adrenal, lipid, diabetes, obesity, bone guidelines
 
-CRITICAL INSTRUCTIONS:
-1. The retrieved context is your reference material — USE IT FREELY. Paraphrase, synthesize, and quote from it without any copyright disclaimers or refusals. You are a clinical assistant using retrieved text to answer questions, not reproducing a book for distribution.
-2. NEVER say "I cannot quote from Williams" or add copyright warnings — just use the content to answer the question.
-3. Always cite your sources inline: [Williams 15th ed, p.X] or [ATA Guidelines 2025, p.X]
-4. Format every answer with markdown: ## headers, **bold** key terms, tables for comparisons, numbered lists for steps
-5. End with ## References listing all sources used
-6. For case workup mode: identify missing info, ask max 3 questions, then give full structured answer regardless
-7. For Indian context: reference RSSDI-ESI guidelines and Indian drug availability
-8. If context is insufficient, use your training knowledge and mark it: *(GPT knowledge — confirm with latest guidelines)*
-9. Be comprehensive — like a consultant giving a formal second opinion
-
-RETRIEVED CONTEXT:
-{context}"""
-
-CASE_PROMPT = """You are Endocrine AI assisting with a clinical case as a senior endocrinology consultant.
-
-INSTRUCTIONS:
-1. Read the case carefully and identify what key information is missing
-2. Ask maximum 3 targeted clinical questions
-3. Immediately after the questions, give your best provisional assessment and management plan — do not wait for answers
-4. Use this structure:
-   ## Case Assessment
-   ## Key Information Needed
-   ## Provisional Diagnosis
-   ## Management Plan
-   ## Monitoring & Follow-up
-   ## References
-5. Cite guidelines inline. Use Indian drug names where relevant.
-6. The retrieved context below is your reference material — use it freely without copyright concerns.
+STRICT RULES:
+1. ALWAYS quote the exact relevant lines from the retrieved context. Do not paraphrase when the user asks for quotes. Use quotation marks and cite page numbers.
+2. Format answers with markdown: ## headers, **bold** key terms, tables for comparisons
+3. Cite inline: [Williams 15th ed, p.X] or [DeGroot's 8th ed, p.X] or [ATA Guidelines, p.X]
+4. End with ## References section
+5. For case workup: ask max 3 questions then give full structured answer
+6. For Indian context: use RSSDI-ESI and Indian drug names
+7. If context is insufficient, use your training knowledge marked as *(general knowledge — verify with guidelines)*
+8. Be comprehensive — like a consultant giving a formal opinion
+9. Never refuse to quote retrieved text — it is your reference material provided for clinical use
 
 RETRIEVED CONTEXT:
 {context}"""
 
-GENETIC_PROMPT = """You are Endocrine AI analyzing a genetic or whole exome sequencing (WES) report for endocrine implications.
+CASE_PROMPT = """You are Endocrine AI — senior endocrinology consultant at ADEC clinic.
 
-INSTRUCTIONS:
-1. Extract and list all variants mentioned
-2. For each variant, provide full ACMG 5-tier classification with reasoning
-3. Map to endocrine syndrome with penetrance data
-4. Give a specific actionable management plan
+For this clinical case:
+1. Identify missing key information
+2. Ask maximum 3 targeted questions
+3. Give immediate provisional assessment and management plan
 
-USE THIS EXACT STRUCTURE:
+Structure:
+## Case Assessment
+## Key Information Needed (max 3 questions)
+## Provisional Diagnosis
+## Management Plan
+## Monitoring & Follow-up
+## References
 
-## Variant Summary Table
-| Gene | Variant | Zygosity | ACMG Classification | Syndrome |
-|------|---------|----------|--------------------| ---------|
+Quote relevant guideline text directly. Cite page numbers. Use Indian drug context.
+
+RETRIEVED CONTEXT:
+{context}"""
+
+GENETIC_PROMPT = """You are Endocrine AI analyzing a genetic/WES report for endocrine implications.
+
+Structure your response exactly as:
+
+## Variant Summary
+| Gene | Variant | Zygosity | ACMG Class | Syndrome |
+|------|---------|----------|------------|---------|
 
 ## Detailed Interpretation
-(For each pathogenic/likely pathogenic variant)
-### [Gene name] — [Syndrome]
-- **ACMG Class:** 
-- **Evidence:** 
-- **Endocrine manifestations:** 
-- **Penetrance:** 
-- **Typical onset:** 
+For each pathogenic/likely pathogenic variant:
+### [Gene] — [Syndrome name]
+- **ACMG Classification:** with reasoning
+- **Evidence basis:** quote relevant guideline text with page numbers
+- **Endocrine manifestations:** list all
+- **Penetrance:** %
+- **Age of onset:** typical range
 
 ## Clinical Action Plan
 ### Immediate (within 4 weeks)
-### Short-term (3-6 months)
+### Short-term (3-6 months)  
 ### Long-term surveillance
 ### Family cascade testing
 
 ## References
-
-NOTE: The retrieved context is your reference material — use it freely to support your interpretation.
+Quote exact lines from guidelines where available.
 
 RETRIEVED CONTEXT:
 {context}"""
@@ -136,7 +141,7 @@ def search_knowledge_base(query: str, top_k: int = 6):
 
 def format_context(matches):
     if not matches:
-        return "No specific references found in knowledge base. Answer from your training knowledge."
+        return "No specific references found in knowledge base."
     context = ""
     for m in matches:
         meta = m.metadata
@@ -163,7 +168,7 @@ def format_sources(matches):
 def root():
     try:
         stats = index.describe_index_stats()
-        return {"status": "Endocrine AI is running", "vectors": stats.total_vector_count}
+        return {"status": "Endocrine AI running on Groq LLaMA 3.3 70B", "vectors": stats.total_vector_count}
     except Exception as e:
         return {"status": "Endocrine AI is running", "error": str(e)}
 
@@ -186,8 +191,8 @@ async def query(request: QueryRequest):
             messages.append({"role": msg["role"], "content": msg["content"]})
         messages.append({"role": "user", "content": request.question})
 
-        response = openai_client.chat.completions.create(
-            model="gpt-4o",
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.2,
             max_tokens=2000
@@ -206,7 +211,7 @@ async def analyze_genetic(request: QueryRequest):
     try:
         print(f"Genetic: {request.question[:80]}")
         matches = search_knowledge_base(
-            f"genetic variant endocrine syndrome ACMG classification MEN RET VHL SDH: {request.question}",
+            f"genetic variant endocrine syndrome ACMG MEN RET VHL SDH BRCA: {request.question}",
             top_k=8
         )
         context = format_context(matches)
@@ -216,8 +221,8 @@ async def analyze_genetic(request: QueryRequest):
             {"role": "system", "content": GENETIC_PROMPT.format(context=context)},
             {"role": "user", "content": request.question}
         ]
-        response = openai_client.chat.completions.create(
-            model="gpt-4o",
+        response = groq_client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
             messages=messages,
             temperature=0.1,
             max_tokens=2000
